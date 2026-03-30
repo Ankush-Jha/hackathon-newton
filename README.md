@@ -29,6 +29,9 @@ Open Copilot Chat and try:
 ### 🎓 Dashboard Sidebar
 Click the Newton School icon in the Activity Bar for quick-action buttons that open Copilot with common queries.
 
+### 🎨 Mint Neo-Brutalist Design
+Experience a modern, premium "Floating Neo-Editor" interface specifically crafted for student productivity. Features sharp shadow layouts and an immersive mint color palette across all views, including dashboards, assignments, and the problem viewer.
+
 ### 🚀 Guided Onboarding
 First-time users get a 3-step walkthrough to connect their account, ask their first question, and explore the dashboard.
 
