@@ -1,0 +1,151 @@
+{
+  "name": "newton-vscode",
+  "displayName": "Newton School",
+  "description": "AI-powered companion for Newton School students — courses, progress, practice problems, and schedule inside Copilot",
+  "version": "0.1.0",
+  "publisher": "newtonschool",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/newtonschool/newton-vscode"
+  },
+  "engines": {
+    "vscode": "^1.102.0"
+  },
+  "categories": [
+    "AI",
+    "Education"
+  ],
+  "keywords": [
+    "newton",
+    "mcp",
+    "copilot",
+    "education",
+    "dsa",
+    "newton school",
+    "coding",
+    "practice"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "newtonSchoolMcp",
+        "label": "Newton School"
+      }
+    ],
+    "commands": [
+      {
+        "command": "newton.connect",
+        "title": "Newton: Connect (MCP + Browser Login)",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "newton.login",
+        "title": "Newton: Log In (Browser)",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "newton.openDashboard",
+        "title": "Newton: Open Dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "newton.refreshStatus",
+        "title": "Newton: Refresh Status"
+      },
+      {
+        "command": "newton.fetchQuestion",
+        "title": "Newton: Fetch Question from URL",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "newton.openAssignment",
+        "title": "Newton: Open Assignment",
+        "icon": "$(book)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "newton-sidebar",
+          "title": "Newton School",
+          "icon": "media/icon-sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "newton-sidebar": [
+        {
+          "type": "webview",
+          "id": "newton.dashboardView",
+          "name": "Dashboard"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "newton.welcome",
+        "title": "Get Started with Newton School",
+        "description": "Set up your AI-powered learning companion in VS Code",
+        "steps": [
+          {
+            "id": "newton.welcome.login",
+            "title": "Connect Your Account",
+            "description": "Log in with your Newton School credentials to sync your courses, progress, and schedule.\n\n[Log In](command:newton.login)",
+            "media": {
+              "markdown": "media/walkthrough/login.md"
+            },
+            "completionEvents": [
+              "onCommand:newton.login"
+            ]
+          },
+          {
+            "id": "newton.welcome.firstQuery",
+            "title": "Ask Your First Question",
+            "description": "Open Copilot Chat and try:\n\n> _What assignments are due this week?_\n\n> _Show me medium array problems from Google_\n\n> _How am I doing in DSA?_",
+            "media": {
+              "markdown": "media/walkthrough/first-query.md"
+            }
+          },
+          {
+            "id": "newton.welcome.dashboard",
+            "title": "Explore Your Dashboard",
+            "description": "View your XP, rank, topic progress, and upcoming schedule all in one place.\n\n[Open Dashboard](command:newton.openDashboard)",
+            "media": {
+              "markdown": "media/walkthrough/dashboard.md"
+            },
+            "completionEvents": [
+              "onCommand:newton.openDashboard"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src --ext ts",
+    "compile": "tsc -p ./",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.102.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "puppeteer-core": "^24.40.0"
+  }
+}
