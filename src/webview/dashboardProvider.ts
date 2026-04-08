@@ -39,7 +39,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         }
       }
       else if (msg.command === 'openExternal' && msg.url) {
-        vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        // Newton login URLs must go through our Puppeteer-managed Chrome, not the OS browser
+        if (msg.url.includes('newtonschool.co/login') || msg.url.includes('newtonschool.co/register')) {
+          vscode.commands.executeCommand('newton.connect');
+        } else {
+          vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        }
+      }
+      else if (msg.command === 'relogin') {
+        // Full reconnect: restart MCP server + open login browser
+        vscode.commands.executeCommand('newton.connect');
       }
     });
   }
@@ -52,12 +61,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
   private async connectToServer(): Promise<void> {
     this.post('status', { state: 'connecting', message: 'Starting Newton School server...' });
     try {
+      // Always dispose and restart to pick up fresh credentials
+      this.mcpClient.dispose();
       await this.mcpClient.start();
       this.post('status', { state: 'connected', message: 'Connected!' });
       // Auto-fetch all essential data in parallel
       await this.handleToolCall('list_courses', {});
     } catch (err) {
-      this.post('status', { state: 'error', message: err instanceof Error ? err.message : String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      const isAuthErr = /unauthorized|session|invalid|expired|not logged/i.test(msg);
+      this.post('status', { state: 'error', message: msg, isAuthError: isAuthErr });
     }
   }
 
@@ -68,7 +81,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       const result = await this.mcpClient.callTool(tool, args);
       this.post('toolResult', { tool, result });
     } catch (err) {
-      this.post('toolError', { tool, error: err instanceof Error ? err.message : String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      const isAuthErr = /unauthorized|session|invalid|expired|not logged/i.test(msg);
+      this.post('toolError', { tool, error: msg, isAuthError: isAuthErr });
     }
   }
 
@@ -875,6 +890,35 @@ body {
     document.querySelectorAll('.btn-tool').forEach(function(b) { b.disabled = false; });
   }
 
+  // ── Auth expired handler ──
+  function showAuthExpired(errMsg) {
+    connected = false;
+    // Switch back to connect page with an auth-expired message
+    document.getElementById('dashboard').style.display = 'none';
+    document.getElementById('pg-connect').style.display = 'block';
+    var statusEl = document.getElementById('status-area');
+    statusEl.innerHTML = '<div class="status status-err" style="margin:0 0 10px">\u274C ' + esc(errMsg || 'Newton session is invalid or expired. Please login again.') + '</div>';
+    var connectPage = document.getElementById('pg-connect');
+    // Inject a re-login guidance card if not already present
+    if (!document.getElementById('relogin-card')) {
+      var card = document.createElement('div');
+      card.id = 'relogin-card';
+      card.style.cssText = 'background:rgba(255,146,136,0.1);border:2px solid var(--tert);border-radius:12px;padding:14px;margin-top:12px;text-align:center';
+      card.innerHTML = '<div style="font-size:13px;font-weight:800;color:var(--tert);margin-bottom:6px">\uD83D\uDD12 Session Expired</div>'
+        + '<div style="font-size:11px;color:var(--on-sf-var);margin-bottom:12px;line-height:1.5">Your Newton School session has expired.<br>Click below to log in again via Chrome.</div>'
+        + '<button id="btn-relogin" class="btn-main" style="background:linear-gradient(135deg,var(--tert),var(--tert-ctr));color:#fff">\uD83D\uDD12 Log In Again</button>';
+      connectPage.appendChild(card);
+      document.getElementById('btn-relogin').addEventListener('click', function() {
+        this.disabled = true;
+        this.textContent = 'Opening login browser...';
+        vscode.postMessage({ command: 'relogin' });
+      });
+    }
+    // Also reset the main connect button
+    var b = document.getElementById('btn-connect');
+    if (b) { b.disabled = false; b.textContent = '\u21BA Reconnect'; }
+  }
+
   // ── Message handler ──
   window.addEventListener('message', function(ev) {
     var msg = ev.data;
@@ -891,9 +935,13 @@ body {
         document.getElementById('dashboard').style.display = 'block';
         setTimeout(function() { el.innerHTML = ''; }, 2000); // fade status after 2s
       } else if (msg.state === 'error') {
-        el.innerHTML = '<div class="status status-err">' + msg.message + '</div>';
-        var b = document.getElementById('btn-connect');
-        if (b) { b.disabled = false; b.textContent = 'Retry'; }
+        if (msg.isAuthError) {
+          showAuthExpired(msg.error);
+        } else {
+          el.innerHTML = '<div class="status status-err">' + esc(msg.message) + '</div>';
+          var b = document.getElementById('btn-connect');
+          if (b) { b.disabled = false; b.textContent = '\u21BA Retry'; }
+        }
       }
     }
 
@@ -936,11 +984,16 @@ body {
     }
 
     if (msg.command === 'toolError') {
-      var resArea = document.getElementById('result-area');
-      resArea.style.display = 'block';
-      document.getElementById('res-title').textContent = 'Error';
-      document.getElementById('res-content').textContent = msg.error;
       enableBtns();
+      if (msg.isAuthError) {
+        // Session expired — show the re-login state
+        showAuthExpired(msg.error);
+      } else {
+        var resArea = document.getElementById('result-area');
+        resArea.style.display = 'block';
+        document.getElementById('res-title').textContent = 'Error';
+        document.getElementById('res-content').textContent = msg.error;
+      }
     }
   });
 })();

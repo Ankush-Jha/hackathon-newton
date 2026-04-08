@@ -2,11 +2,87 @@
 // Fetches Newton School questions using puppeteer-core (system Chrome).
 // Uses a persistent user data directory so login sessions are preserved.
 // Includes in-memory cache with 30-min TTL to avoid redundant scraping.
+// Uses a singleton browser to prevent multiple Chrome windows from opening.
 
 import * as puppeteer from 'puppeteer-core';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// ── Singleton Browser Manager ────────────────────────────────────────────
+// Ensures only ONE Chrome instance runs at a time across all function calls.
+// Reference-counted: opens when first needed, closes after IDLE_TIMEOUT_MS
+// of no active users, or immediately when headless mode needs to switch.
+
+const IDLE_TIMEOUT_MS = 10_000; // close Chrome if idle for 10 s
+
+let _browser: puppeteer.Browser | null = null;
+let _browserHeadless: boolean = true;
+let _refCount = 0;
+let _idleTimer: ReturnType<typeof setTimeout> | null = null;
+let _launchPromise: Promise<puppeteer.Browser> | null = null; // prevents race conditions
+
+/** Acquire a shared browser. Caller MUST call releaseBrowser() when done. */
+async function acquireBrowser(headless: boolean): Promise<puppeteer.Browser> {
+    // If we need a different headedness, close the existing headless one first
+    if (_browser && _browserHeadless !== headless) {
+        await forceCloseBrowser();
+    }
+
+    // Cancel any pending idle close
+    if (_idleTimer) {
+        clearTimeout(_idleTimer);
+        _idleTimer = null;
+    }
+
+    // If already launching, wait for it
+    if (_launchPromise) {
+        _browser = await _launchPromise;
+    }
+
+    if (!_browser) {
+        _launchPromise = launchBrowser(headless);
+        try {
+            _browser = await _launchPromise;
+            _browserHeadless = headless;
+        } finally {
+            _launchPromise = null;
+        }
+        // Clean up if browser disconnects unexpectedly
+        _browser.on('disconnected', () => {
+            _browser = null;
+            _refCount = 0;
+            _launchPromise = null;
+        });
+    }
+
+    _refCount++;
+    return _browser;
+}
+
+/** Release the shared browser. Starts idle timer to auto-close. */
+function releaseBrowser(): void {
+    _refCount = Math.max(0, _refCount - 1);
+    if (_refCount === 0 && _browser) {
+        _idleTimer = setTimeout(() => {
+            forceCloseBrowser().catch(() => { /* ignore */ });
+        }, IDLE_TIMEOUT_MS);
+    }
+}
+
+async function forceCloseBrowser(): Promise<void> {
+    if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+    const b = _browser;
+    _browser = null;
+    _refCount = 0;
+    _launchPromise = null;
+    if (b) { try { await b.close(); } catch { /* already closed */ } }
+}
+
+/** Forcefully close the shared browser (e.g. on extension deactivation). */
+export async function closeBrowserSingleton(): Promise<void> {
+    await forceCloseBrowser();
+}
 
 // ── Question Cache ──────────────────────────────────────────────────────
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -62,24 +138,27 @@ function extractPlaygroundHash(url: string): string | undefined {
 
 /**
  * Extract session cookies from the persistent Chrome profile for API authentication.
- * Launches a headless browser, navigates to Newton School, and reads cookies.
+ * Uses the shared browser singleton — no extra Chrome window is opened.
  * Returns the cookie string in "name=value; name2=value2" format.
  */
 export async function getCookiesForDomain(): Promise<string> {
-    let browser: puppeteer.Browser | null = null;
+    const browser = await acquireBrowser(true);
     try {
-        browser = await launchBrowser(true);
         const page = await browser.newPage();
-        await page.goto('https://my.newtonschool.co', {
-            waitUntil: 'networkidle2',
-            timeout: 15000
-        });
-        const cookies = await page.cookies();
-        return cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        try {
+            await page.goto('https://my.newtonschool.co', {
+                waitUntil: 'networkidle2',
+                timeout: 15000
+            });
+            const cookies = await page.cookies();
+            return cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        } finally {
+            await page.close();
+        }
     } catch (err) {
         throw new Error(`Failed to extract cookies: ${err instanceof Error ? err.message : err}`);
     } finally {
-        try { if (browser) { await browser.close(); } } catch { /* */ }
+        releaseBrowser();
     }
 }
 
@@ -102,10 +181,9 @@ const NEWTON_CLIENT_SECRET = 'f3zqwMUUQ5VJOFQAuoAWlDJlfjauOTHNRy8djit9XgjjQcdrQn
  * - Make the API call with all required headers
  */
 export async function fetchApiViaBrowser(apiPath: string): Promise<unknown> {
-    let browser: puppeteer.Browser | null = null;
+    const browser = await acquireBrowser(true);
+    const page = await browser.newPage();
     try {
-        browser = await launchBrowser(true);
-        const page = await browser.newPage();
 
         // Navigate to Newton School to establish auth context
         await page.goto('https://my.newtonschool.co/dashboard', {
@@ -166,7 +244,8 @@ export async function fetchApiViaBrowser(apiPath: string): Promise<unknown> {
         if (err instanceof Error && err.message === 'NOT_LOGGED_IN') { throw err; }
         throw new Error(`Browser API fetch failed: ${err instanceof Error ? err.message : err}`);
     } finally {
-        try { if (browser) { await browser.close(); } } catch { /* */ }
+        try { await page.close(); } catch { /* */ }
+        releaseBrowser();
     }
 }
 
@@ -215,6 +294,14 @@ function findChromePath(): string {
 
 async function launchBrowser(headless: boolean = true): Promise<puppeteer.Browser> {
     const profileDir = getProfileDir();
+
+    // Chrome leaves lock files behind when it exits uncleanly (e.g. extension reload,
+    // Puppeteer crash, VS Code restart). Delete them before launching so we never
+    // hit "The browser is already running" errors.
+    for (const lockFile of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+        try { fs.rmSync(path.join(profileDir, lockFile), { force: true }); } catch { /* ignore */ }
+    }
+
     return puppeteer.launch({
         executablePath: findChromePath(),
         headless: headless ? true : false,
@@ -281,10 +368,9 @@ export async function openLoginBrowser(): Promise<void> {
  * Check if the stored session is still valid by visiting Newton School.
  */
 export async function isLoggedIn(): Promise<boolean> {
-    let browser: puppeteer.Browser | null = null;
+    const browser = await acquireBrowser(true);
+    const page = await browser.newPage();
     try {
-        browser = await launchBrowser(true);
-        const page = await browser.newPage();
         await page.goto('https://my.newtonschool.co/playground', {
             waitUntil: 'networkidle2',
             timeout: 15000
@@ -295,7 +381,8 @@ export async function isLoggedIn(): Promise<boolean> {
     } catch {
         return false;
     } finally {
-        try { if (browser) { await browser.close(); } } catch { /* */ }
+        try { await page.close(); } catch { /* */ }
+        releaseBrowser();
     }
 }
 
@@ -312,9 +399,9 @@ export async function fetchQuestionByTitle(
     const cached = cacheGet(cacheKey);
     if (cached) { return { ...cached, ...metadata } as QuestionData; }
 
-    const browser = await launchBrowser(true);
+    const browser = await acquireBrowser(true);
+    const page = await browser.newPage();
     try {
-        const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
 
         // Navigate to arena
@@ -370,7 +457,8 @@ export async function fetchQuestionByTitle(
         cacheSet(`url:${finalUrl}`, result);
         return result;
     } finally {
-        await browser.close();
+        try { await page.close(); } catch { /* */ }
+        releaseBrowser();
     }
 }
 
@@ -383,9 +471,9 @@ export async function fetchQuestion(url: string): Promise<QuestionData> {
     const cached = cacheGet(cacheKey);
     if (cached) { return cached; }
 
-    const browser = await launchBrowser(true);
+    const browser = await acquireBrowser(true);
+    const page = await browser.newPage();
     try {
-        const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
@@ -403,7 +491,8 @@ export async function fetchQuestion(url: string): Promise<QuestionData> {
         cacheSet(cacheKey, result);
         return result;
     } finally {
-        await browser.close();
+        try { await page.close(); } catch { /* */ }
+        releaseBrowser();
     }
 }
 

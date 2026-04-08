@@ -10,7 +10,7 @@ import { registerNewtonMcpServer } from './mcp/serverProvider';
 import { McpClient } from './mcp/mcpClient';
 import { DashboardViewProvider } from './webview/dashboardProvider';
 import { ProblemPanel } from './webview/problemPanel';
-import { fetchQuestion, fetchQuestionByTitle, setProfileDir, openLoginBrowser } from './scraper/questionFetcher';
+import { fetchQuestion, fetchQuestionByTitle, setProfileDir, openLoginBrowser, closeBrowserSingleton } from './scraper/questionFetcher';
 import { openAssignmentPanel } from './webview/assignmentPanel';
 
 let mcpClient: McpClient | undefined;
@@ -209,5 +209,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
     mcpClient?.dispose();
+    closeBrowserSingleton().catch(() => { /* ignore */ });
     console.log('Newton School extension deactivated.');
 }

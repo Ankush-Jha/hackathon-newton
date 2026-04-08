@@ -45,7 +45,14 @@ export class ProblemPanel {
       } else if (msg.command === 'runTests') {
         await this.handleRunTests(msg.tests as TestCase[]);
       } else if (msg.command === 'openExternal') {
-        if (msg.url) { vscode.env.openExternal(vscode.Uri.parse(msg.url)); }
+        if (msg.url) {
+          // Newton login URLs must open via Puppeteer Chrome, not the system browser
+          if (msg.url.includes('newtonschool.co/login') || msg.url.includes('newtonschool.co/register')) {
+            vscode.commands.executeCommand('newton.connect');
+          } else {
+            vscode.env.openExternal(vscode.Uri.parse(msg.url));
+          }
+        }
       } else if (msg.command === 'submitToNewton') {
         await this.handleSubmitToNewton(msg.language as string);
       }

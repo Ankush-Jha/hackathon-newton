@@ -169,7 +169,12 @@ export async function openAssignmentPanel(
     // Set up message handler
     currentPanel.webview.onDidReceiveMessage(async (msg) => {
         if (msg.type === 'openExternal' && msg.url) {
-            vscode.env.openExternal(vscode.Uri.parse(msg.url));
+            // Newton login URLs must open via our Puppeteer Chrome, not the OS browser
+            if (msg.url.includes('newtonschool.co/login') || msg.url.includes('newtonschool.co/register')) {
+                vscode.commands.executeCommand('newton.connect');
+            } else {
+                vscode.env.openExternal(vscode.Uri.parse(msg.url));
+            }
         } else if (msg.type === 'createSolution' && msg.question) {
             await createSolutionFile(msg.question, context);
         } else if (msg.type === 'submitCode' && msg.playgroundHash) {
@@ -315,17 +320,22 @@ body { background: #E8FAF9; color: #223131; font-family: -apple-system, sans-ser
 }
 
 function errorHtml(title: string, message: string, url: string): string {
+    const isAuthError = /unauthorized|session|invalid|expired|not logged/i.test(message);
+    const actionBtn = isAuthError
+        ? `<button class="btn" onclick="var v=acquireVsCodeApi();v.postMessage({type:'openExternal',url:'https://my.newtonschool.co/login'})">\uD83D\uDD12 Log In Again</button>`
+        : `<button class="btn" onclick="var v=acquireVsCodeApi();v.postMessage({type:'openExternal',url:'${url.replace(/'/g, "\\'")}'})">&gt; Open in Browser</button>`;
     return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <style>
-body { background: #E8FAF9; color: #223131; font-family: -apple-system, sans-serif; padding: 40px; display: flex; justify-content: center; }
+body { background: #E8FAF9; color: #223131; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; }
 .card { max-width: 500px; background: #FFFFFF; border: 2px solid #223131; border-radius: 12px; padding: 32px; text-align: center; box-shadow: 4px 4px 0 0 #223131; }
 h2 { color: #9B3D37; margin-bottom: 12px; font-weight: 900; }
-p { color: #4E5F5E; line-height: 1.6; }
-.btn { display: inline-block; margin-top: 16px; padding: 10px 20px; background: #00675F; color: #BFFFF5; border: 2px solid #223131; border-radius: 10px; font-weight: 800; cursor: pointer; text-decoration: none; box-shadow: 3px 3px 0 0 #223131; }
+p { color: #4E5F5E; line-height: 1.6; margin-bottom: 16px; }
+.btn { display: inline-block; margin-top: 8px; padding: 10px 20px; background: #00675F; color: #BFFFF5; border: 2px solid #223131; border-radius: 10px; font-weight: 800; cursor: pointer; box-shadow: 3px 3px 0 0 #223131; font-size: 14px; }
+.btn:active { transform: translate(2px,2px); box-shadow: none; }
 </style></head><body><div class="card">
-<h2>❌ ${esc(title)}</h2>
+<h2>\u274C ${esc(title)}</h2>
 <p>${esc(message)}</p>
-<a class="btn" href="${esc(url)}">Open in Browser</a>
+${actionBtn}
 </div></body></html>`;
 }
 
